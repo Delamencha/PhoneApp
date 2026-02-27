@@ -18,6 +18,14 @@ export interface Category {
   sortOrder: number;
 }
 
+export interface IdeaImage {
+  id: number;
+  ideaId: number;
+  uri: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
 // ─── Form / UI types ───
 
 export type IdeaFormData = Omit<Idea, 'id' | 'updatedAt'>;

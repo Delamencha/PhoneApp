@@ -65,5 +65,5 @@ export function previewNewBubbleRadius(
   ];
 
   const scale = computeScaleFactor(inputs, canvasSize);
-  return baseRadius(newWillingness) * scale;
+  return baseRadius(newWillingness, canvasSize.width) * scale;
 }

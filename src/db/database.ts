@@ -34,6 +34,15 @@ async function initializeSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       updatedAt TEXT NOT NULL,
       FOREIGN KEY (categoryId) REFERENCES categories(id)
     );
+
+    CREATE TABLE IF NOT EXISTS idea_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ideaId INTEGER NOT NULL,
+      uri TEXT NOT NULL,
+      sortOrder INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (ideaId) REFERENCES ideas(id) ON DELETE CASCADE
+    );
   `);
 
   // Seed default categories if none exist

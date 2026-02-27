@@ -1,12 +1,14 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import BottomSheet from '@gorhom/bottom-sheet';
-import { BubbleData, Idea } from '../models/types';
+import { BubbleData, Idea, IdeaImage } from '../models/types';
 import { CanvasSize, findNewBubblePosition, computeLayout, baseRadius, computeScaleFactor } from '../layout/bubblePacker';
 import { useIdeas } from '../hooks/useIdeas';
 import { useCategories } from '../hooks/useCategories';
 import { useBubbleLayout } from '../hooks/useBubbleLayout';
+import { useDatabase } from '../db/provider';
+import * as imageService from '../services/imageService';
 import BubbleCanvas from '../components/BubbleCanvas';
 import CategorySidebar from '../components/CategorySidebar';
 import IdeaDetailSheet from '../components/IdeaDetailSheet';
@@ -21,6 +23,9 @@ export default function MainScreen() {
   const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [ideaImages, setIdeaImages] = useState<IdeaImage[]>([]);
+
+  const { db } = useDatabase();
 
   // ─── Data hooks ───
   const {
@@ -53,11 +58,21 @@ export default function MainScreen() {
     setCanvasSize(size);
   }, []);
 
+  const loadIdeaImages = useCallback(
+    async (ideaId: number) => {
+      if (!db) return;
+      const imgs = await imageService.getImagesByIdeaId(db, ideaId);
+      setIdeaImages(imgs);
+    },
+    [db]
+  );
+
   const handleBubbleTap = useCallback((data: BubbleData) => {
     setSelectedIdea(data.idea);
     setIsCreating(false);
+    loadIdeaImages(data.idea.id);
     bottomSheetRef.current?.expand();
-  }, []);
+  }, [loadIdeaImages]);
 
   const handleBubbleDragEnd = useCallback(
     async (id: number, normalizedX: number, normalizedY: number) => {
@@ -69,13 +84,33 @@ export default function MainScreen() {
   const handleFABPress = useCallback(() => {
     setSelectedIdea(null);
     setIsCreating(true);
+    setIdeaImages([]);
     bottomSheetRef.current?.expand();
   }, []);
 
   const handleSheetClose = useCallback(() => {
     setSelectedIdea(null);
     setIsCreating(false);
+    setIdeaImages([]);
   }, []);
+
+  const handleAddImage = useCallback(
+    async (uri: string) => {
+      if (!db || !selectedIdea) return;
+      await imageService.addImageToIdea(db, selectedIdea.id, uri);
+      await loadIdeaImages(selectedIdea.id);
+    },
+    [db, selectedIdea, loadIdeaImages]
+  );
+
+  const handleRemoveImage = useCallback(
+    async (imageId: number) => {
+      if (!db || !selectedIdea) return;
+      await imageService.removeImage(db, imageId);
+      await loadIdeaImages(selectedIdea.id);
+    },
+    [db, selectedIdea, loadIdeaImages]
+  );
 
   const handleSaveIdea = useCallback(
     async (data: Partial<Idea> & { title: string; source: string; willingness: number; categoryId: number; createdAt: string }) => {
@@ -90,7 +125,7 @@ export default function MainScreen() {
           { id: -1, willingness: data.willingness, posX: 0.5, posY: 0.5 },
         ];
         const scale = computeScaleFactor(allInputs, canvasSize);
-        const newRadius = baseRadius(data.willingness) * scale;
+        const newRadius = baseRadius(data.willingness, canvasSize.width) * scale;
         const pos = findNewBubblePosition(existingOutputs, newRadius, canvasSize);
 
         await addIdea({
@@ -112,10 +147,13 @@ export default function MainScreen() {
 
   const handleDeleteIdea = useCallback(
     async (id: number) => {
+      if (db) {
+        await imageService.removeAllImagesForIdea(db, id);
+      }
       await removeIdea(id);
       bottomSheetRef.current?.close();
     },
-    [removeIdea]
+    [db, removeIdea]
   );
 
   const handleCategorySelect = useCallback((catId: number | null) => {
@@ -184,8 +222,11 @@ export default function MainScreen() {
         isCreating={isCreating}
         categories={categories}
         defaultCategoryId={defaultCategoryId}
+        images={ideaImages}
         onSave={handleSaveIdea}
         onDelete={handleDeleteIdea}
+        onAddImage={handleAddImage}
+        onRemoveImage={handleRemoveImage}
         onClose={handleSheetClose}
       />
 

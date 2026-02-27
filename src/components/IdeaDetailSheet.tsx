@@ -1,4 +1,4 @@
-import React, { forwardRef, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -12,9 +12,10 @@ import {
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-import { Category, Idea } from '../models/types';
+import { Category, Idea, IdeaImage } from '../models/types';
 import { getElapsedLabel } from '../layout/bubblePacker';
 import WillSlider from './WillSlider';
+import SourceImageGrid from './SourceImageGrid';
 import { Colors, Spacing, BorderRadius, Shadow } from '../theme';
 
 interface IdeaDetailSheetProps {
@@ -22,6 +23,7 @@ interface IdeaDetailSheetProps {
   isCreating: boolean;
   categories: Category[];
   defaultCategoryId: number;
+  images: IdeaImage[];
   onSave: (data: {
     title: string;
     source: string;
@@ -30,14 +32,27 @@ interface IdeaDetailSheetProps {
     createdAt: string;
   }) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  onAddImage: (uri: string) => Promise<void>;
+  onRemoveImage: (imageId: number) => Promise<void>;
   onClose: () => void;
 }
 
 const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
   (
-    { idea, isCreating, categories, defaultCategoryId, onSave, onDelete, onClose },
+    { idea, isCreating, categories, defaultCategoryId, images, onSave, onDelete, onAddImage, onRemoveImage, onClose },
     ref
   ) => {
+    // ─── Refs ───
+    const internalRef = useRef<BottomSheet>(null);
+    const setRef = useCallback(
+      (node: BottomSheet | null) => {
+        internalRef.current = node;
+        if (typeof ref === 'function') ref(node);
+        else if (ref) (ref as React.MutableRefObject<BottomSheet | null>).current = node;
+      },
+      [ref]
+    );
+
     // ─── Form state ───
     const [title, setTitle] = useState('');
     const [source, setSource] = useState('');
@@ -45,6 +60,7 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
     const [categoryId, setCategoryId] = useState(defaultCategoryId);
     const [createdAt, setCreatedAt] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
+    const [showTimePicker, setShowTimePicker] = useState(false);
 
     const snapPoints = useMemo(() => ['65%', '90%'], []);
 
@@ -66,6 +82,10 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
     }, [idea, isCreating, defaultCategoryId]);
 
     // ─── Handlers ───
+    const handleBack = useCallback(() => {
+      internalRef.current?.close();
+    }, []);
+
     const handleSave = useCallback(async () => {
       await onSave({
         title: title.trim() || 'Untitled Idea',
@@ -89,9 +109,28 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
     }, [idea, onDelete]);
 
     const handleDateChange = useCallback(
-      (_event: DateTimePickerEvent, selectedDate?: Date) => {
-        setShowDatePicker(Platform.OS === 'ios');
-        if (selectedDate) {
+      (event: DateTimePickerEvent, selectedDate?: Date) => {
+        if (Platform.OS === 'android') {
+          setShowDatePicker(false);
+          if (event.type === 'set' && selectedDate) {
+            setCreatedAt(selectedDate);
+            setShowTimePicker(true);
+          }
+        } else {
+          if (selectedDate) {
+            setCreatedAt(selectedDate);
+          }
+        }
+      },
+      []
+    );
+
+    const handleTimeChange = useCallback(
+      (event: DateTimePickerEvent, selectedDate?: Date) => {
+        if (Platform.OS === 'android') {
+          setShowTimePicker(false);
+        }
+        if (event.type === 'set' && selectedDate) {
           setCreatedAt(selectedDate);
         }
       },
@@ -123,7 +162,7 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
 
     return (
       <BottomSheet
-        ref={ref}
+        ref={setRef}
         index={-1}
         snapPoints={snapPoints}
         enablePanDownToClose
@@ -138,14 +177,24 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
         >
           {/* Header */}
           <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backBtn}
+              onPress={handleBack}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="arrow-back" size={22} color={Colors.textSecondary} />
+            </TouchableOpacity>
             <Text style={styles.headerTitle}>
               {isCreating ? 'New Idea' : 'Edit Idea'}
             </Text>
-            {elapsedText && (
+            {elapsedText ? (
               <View style={styles.elapsedBadge}>
                 <Ionicons name="time-outline" size={14} color={Colors.textTertiary} />
                 <Text style={styles.elapsedText}>{elapsedText} ago</Text>
               </View>
+            ) : (
+              <View style={styles.headerSpacer} />
             )}
           </View>
 
@@ -176,6 +225,18 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
             />
           </View>
 
+          {/* Source Images */}
+          {!isCreating && idea && (
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Source Image</Text>
+              <SourceImageGrid
+                images={images}
+                onAdd={onAddImage}
+                onRemove={onRemoveImage}
+              />
+            </View>
+          )}
+
           {/* Created time */}
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Created Time</Text>
@@ -198,9 +259,17 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
             {showDatePicker && (
               <DateTimePicker
                 value={createdAt}
-                mode="datetime"
+                mode={Platform.OS === 'ios' ? 'datetime' : 'date'}
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={handleDateChange}
+              />
+            )}
+            {showTimePicker && (
+              <DateTimePicker
+                value={createdAt}
+                mode="time"
+                display="default"
+                onChange={handleTimeChange}
               />
             )}
           </View>
@@ -302,10 +371,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.md,
   },
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.surfaceVariant,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  headerSpacer: {
+    width: 36,
   },
   elapsedBadge: {
     flexDirection: 'row',

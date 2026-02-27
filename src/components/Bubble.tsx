@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -20,9 +20,18 @@ interface BubbleProps {
 export default function Bubble({ data, onTap, onDragEnd, onDragMove }: BubbleProps) {
   const { idea, radius, screenX, screenY, color, elapsedLabel } = data;
 
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
+  const absX = useSharedValue(screenX - radius);
+  const absY = useSharedValue(screenY - radius);
   const scale = useSharedValue(1);
+  const isDragging = useSharedValue(false);
+
+  // Sync position from props when not dragging
+  useEffect(() => {
+    if (!isDragging.value) {
+      absX.value = screenX - radius;
+      absY.value = screenY - radius;
+    }
+  }, [screenX, screenY, radius]);
 
   const diameter = radius * 2;
 
@@ -44,33 +53,38 @@ export default function Bubble({ data, onTap, onDragEnd, onDragMove }: BubblePro
     runOnJS(handleTap)();
   });
 
+  const startX = useSharedValue(0);
+  const startY = useSharedValue(0);
+
   const pan = Gesture.Pan()
     .onStart(() => {
+      isDragging.value = true;
+      startX.value = absX.value;
+      startY.value = absY.value;
       scale.value = withSpring(1.08, { damping: 15 });
     })
     .onUpdate((e) => {
-      translateX.value = e.translationX;
-      translateY.value = e.translationY;
+      absX.value = startX.value + e.translationX;
+      absY.value = startY.value + e.translationY;
       runOnJS(handleDragMove)(
-        screenX + e.translationX,
-        screenY + e.translationY
+        startX.value + radius + e.translationX,
+        startY.value + radius + e.translationY
       );
     })
     .onEnd((e) => {
-      const finalX = screenX + e.translationX;
-      const finalY = screenY + e.translationY;
-      translateX.value = 0;
-      translateY.value = 0;
+      const finalCenterX = startX.value + radius + e.translationX;
+      const finalCenterY = startY.value + radius + e.translationY;
+      isDragging.value = false;
       scale.value = withSpring(1, { damping: 15 });
-      runOnJS(handleDragEnd)(finalX, finalY);
+      runOnJS(handleDragEnd)(finalCenterX, finalCenterY);
     });
 
   const gesture = Gesture.Exclusive(pan, tap);
 
   const animatedStyle = useAnimatedStyle(() => ({
+    left: absX.value,
+    top: absY.value,
     transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
       { scale: scale.value },
     ],
   }));
@@ -97,8 +111,6 @@ export default function Bubble({ data, onTap, onDragEnd, onDragMove }: BubblePro
             height: diameter,
             borderRadius: radius,
             backgroundColor: color,
-            left: screenX - radius,
-            top: screenY - radius,
           },
           animatedStyle,
         ]}

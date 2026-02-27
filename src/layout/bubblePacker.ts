@@ -34,10 +34,12 @@ export interface CanvasSize {
 
 // ─── Radius Calculation ───
 
-/** Get base radius (before auto-scale) from willingness */
-export function baseRadius(willingness: number): number {
+/** Get base radius (before auto-scale) from willingness.
+ *  When canvasWidth is provided, willingness=1 maps to radius = canvasWidth/2 (fills the row). */
+export function baseRadius(willingness: number, canvasWidth?: number): number {
   const w = Math.max(0, Math.min(1, willingness));
-  return BubbleConfig.minRadius + w * (BubbleConfig.maxRadius - BubbleConfig.minRadius);
+  const maxR = canvasWidth ? canvasWidth / 2 : BubbleConfig.maxRadius;
+  return BubbleConfig.minRadius + w * (maxR - BubbleConfig.minRadius);
 }
 
 /** Compute global scale factor so all bubbles fit in canvas */
@@ -48,7 +50,7 @@ export function computeScaleFactor(
   if (bubbles.length === 0) return 1;
 
   const totalArea = bubbles.reduce((sum, b) => {
-    const r = baseRadius(b.willingness);
+    const r = baseRadius(b.willingness, canvas.width);
     return sum + Math.PI * r * r;
   }, 0);
 
@@ -73,7 +75,7 @@ export function computeLayout(
 
   // Convert normalized positions to screen coordinates
   let outputs: BubbleOutput[] = bubbles.map((b) => {
-    const r = baseRadius(b.willingness) * scale;
+    const r = baseRadius(b.willingness, canvas.width) * scale;
     return {
       id: b.id,
       radius: r,
