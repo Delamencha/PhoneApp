@@ -1,29 +1,37 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import BottomSheet from '@gorhom/bottom-sheet';
-import { BubbleData, Idea, IdeaImage } from '../models/types';
+import { BubbleData, CompletionStatus, Idea, IdeaImage } from '../models/types';
 import { CanvasSize, findNewBubblePosition, computeLayout, baseRadius, computeScaleFactor } from '../layout/bubblePacker';
 import { useIdeas } from '../hooks/useIdeas';
+import { useCompletedIdeas } from '../hooks/useCompletedIdeas';
 import { useCategories } from '../hooks/useCategories';
 import { useBubbleLayout } from '../hooks/useBubbleLayout';
 import { useDatabase } from '../db/provider';
 import * as imageService from '../services/imageService';
+import * as settingsService from '../services/settingsService';
 import BubbleCanvas from '../components/BubbleCanvas';
 import CategorySidebar from '../components/CategorySidebar';
 import IdeaDetailSheet from '../components/IdeaDetailSheet';
 import CategoryManager from '../components/CategoryManager';
+import CompletedList from '../components/CompletedList';
+import ViewModeToggle, { ViewMode } from '../components/ViewModeToggle';
 import FAB from '../components/FAB';
 import { Colors, Spacing, BubbleConfig } from '../theme';
 
 export default function MainScreen() {
   // ─── State ───
+  const [viewMode, setViewMode] = useState<ViewMode>('ideas');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
+  const [categoryRestored, setCategoryRestored] = useState(false);
   const [canvasSize, setCanvasSize] = useState<CanvasSize>({ width: 0, height: 0 });
   const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isViewingCompleted, setIsViewingCompleted] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [ideaImages, setIdeaImages] = useState<IdeaImage[]>([]);
+  const [pendingImageUris, setPendingImageUris] = useState<string[]>([]);
 
   const { db } = useDatabase();
 
@@ -37,6 +45,18 @@ export default function MainScreen() {
     refresh: refreshCategories,
   } = useCategories();
 
+  // ─── Restore persisted sidebar selection ───
+  useEffect(() => {
+    if (!db || catLoading || categoryRestored) return;
+    (async () => {
+      const savedId = await settingsService.getSelectedCategoryId(db);
+      if (savedId !== null && categories.some((c) => c.id === savedId)) {
+        setSelectedCategoryId(savedId);
+      }
+      setCategoryRestored(true);
+    })();
+  }, [db, catLoading, categoryRestored, categories]);
+
   const {
     ideas,
     loading: ideasLoading,
@@ -46,6 +66,13 @@ export default function MainScreen() {
     removeIdea,
     refresh: refreshIdeas,
   } = useIdeas(selectedCategoryId);
+
+  const {
+    completedIdeas,
+    completeIdea,
+    removeCompletedIdea,
+    refresh: refreshCompleted,
+  } = useCompletedIdeas(selectedCategoryId);
 
   // ─── Layout ───
   const bubbles = useBubbleLayout(ideas, canvasSize);
@@ -85,37 +112,79 @@ export default function MainScreen() {
     setSelectedIdea(null);
     setIsCreating(true);
     setIdeaImages([]);
+    setPendingImageUris([]);
     bottomSheetRef.current?.expand();
   }, []);
 
   const handleSheetClose = useCallback(() => {
     setSelectedIdea(null);
     setIsCreating(false);
+    setIsViewingCompleted(false);
     setIdeaImages([]);
+    setPendingImageUris([]);
   }, []);
+
+  const handleCompleteIdea = useCallback(
+    async (status: CompletionStatus, note: string) => {
+      if (!selectedIdea) return;
+      await completeIdea(selectedIdea.id, status, note || undefined);
+      await refreshIdeas();
+      bottomSheetRef.current?.close();
+    },
+    [selectedIdea, completeIdea, refreshIdeas],
+  );
+
+  const handleCompletedIdeaTap = useCallback(
+    (idea: Idea) => {
+      setSelectedIdea(idea);
+      setIsCreating(false);
+      setIsViewingCompleted(true);
+      loadIdeaImages(idea.id);
+      bottomSheetRef.current?.expand();
+    },
+    [loadIdeaImages],
+  );
+
+  const handleDeleteCompletedIdea = useCallback(
+    async (id: number) => {
+      if (db) {
+        await imageService.removeAllImagesForIdea(db, id);
+      }
+      await removeCompletedIdea(id);
+    },
+    [db, removeCompletedIdea],
+  );
 
   const handleAddImage = useCallback(
     async (uri: string) => {
+      if (isCreating) {
+        setPendingImageUris((prev) => [...prev, uri]);
+        return;
+      }
       if (!db || !selectedIdea) return;
       await imageService.addImageToIdea(db, selectedIdea.id, uri);
       await loadIdeaImages(selectedIdea.id);
     },
-    [db, selectedIdea, loadIdeaImages]
+    [db, selectedIdea, isCreating, loadIdeaImages],
   );
 
   const handleRemoveImage = useCallback(
     async (imageId: number) => {
+      if (isCreating) {
+        const index = -(imageId + 1);
+        setPendingImageUris((prev) => prev.filter((_, i) => i !== index));
+        return;
+      }
       if (!db || !selectedIdea) return;
       await imageService.removeImage(db, imageId);
       await loadIdeaImages(selectedIdea.id);
     },
-    [db, selectedIdea, loadIdeaImages]
+    [db, selectedIdea, isCreating, loadIdeaImages],
   );
 
   const handleSaveIdea = useCallback(
     async (data: Partial<Idea> & { title: string; source: string; willingness: number; categoryId: number; createdAt: string }) => {
       if (isCreating) {
-        // Find position for new bubble
         const existingOutputs = computeLayout(
           ideas.map((i) => ({ id: i.id, willingness: i.willingness, posX: i.posX, posY: i.posY })),
           canvasSize
@@ -128,7 +197,7 @@ export default function MainScreen() {
         const newRadius = baseRadius(data.willingness, canvasSize.width) * scale;
         const pos = findNewBubblePosition(existingOutputs, newRadius, canvasSize);
 
-        await addIdea({
+        const newId = await addIdea({
           title: data.title,
           source: data.source,
           categoryId: data.categoryId,
@@ -137,12 +206,19 @@ export default function MainScreen() {
           posY: pos.posY,
           createdAt: data.createdAt,
         });
+
+        if (newId && db && pendingImageUris.length > 0) {
+          for (const uri of pendingImageUris) {
+            await imageService.addImageToIdea(db, newId, uri);
+          }
+          setPendingImageUris([]);
+        }
       } else if (selectedIdea) {
         await editIdea(selectedIdea.id, data);
       }
       bottomSheetRef.current?.close();
     },
-    [isCreating, selectedIdea, ideas, canvasSize, addIdea, editIdea]
+    [isCreating, selectedIdea, ideas, canvasSize, addIdea, editIdea, db, pendingImageUris],
   );
 
   const handleDeleteIdea = useCallback(
@@ -156,9 +232,15 @@ export default function MainScreen() {
     [db, removeIdea]
   );
 
-  const handleCategorySelect = useCallback((catId: number | null) => {
-    setSelectedCategoryId(catId);
-  }, []);
+  const handleCategorySelect = useCallback(
+    (catId: number | null) => {
+      setSelectedCategoryId(catId);
+      if (db) {
+        settingsService.setSelectedCategoryId(db, catId);
+      }
+    },
+    [db],
+  );
 
   const handleCategoryLongPress = useCallback(() => {
     setShowCategoryManager(true);
@@ -178,6 +260,16 @@ export default function MainScreen() {
   const defaultCategoryId =
     selectedCategoryId ?? (categories.length > 0 ? categories[0].id : 1);
 
+  const displayImages: IdeaImage[] = isCreating
+    ? pendingImageUris.map((uri, i) => ({
+        id: -(i + 1),
+        ideaId: 0,
+        uri,
+        sortOrder: i,
+        createdAt: '',
+      }))
+    : ideaImages;
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <View style={styles.container}>
@@ -191,27 +283,38 @@ export default function MainScreen() {
 
         {/* Main canvas area */}
         <View style={styles.canvasWrapper}>
-          <BubbleCanvas
-            bubbles={bubbles}
-            onBubbleTap={handleBubbleTap}
-            onBubbleDragEnd={handleBubbleDragEnd}
-            canvasSize={canvasSize}
-            onCanvasLayout={handleCanvasLayout}
-          />
+          <ViewModeToggle mode={viewMode} onModeChange={setViewMode} />
 
-          {/* Empty state */}
-          {!ideasLoading && ideas.length === 0 && (
-            <View style={styles.emptyState} pointerEvents="none">
-              <Text style={styles.emptyIcon}>💡</Text>
-              <Text style={styles.emptyText}>No ideas yet</Text>
-              <Text style={styles.emptySubtext}>
-                Tap + to capture your first idea
-              </Text>
-            </View>
+          {viewMode === 'ideas' ? (
+            <>
+              <BubbleCanvas
+                bubbles={bubbles}
+                onBubbleTap={handleBubbleTap}
+                onBubbleDragEnd={handleBubbleDragEnd}
+                canvasSize={canvasSize}
+                onCanvasLayout={handleCanvasLayout}
+              />
+
+              {!ideasLoading && ideas.length === 0 && (
+                <View style={styles.emptyState} pointerEvents="none">
+                  <Text style={styles.emptyIcon}>💡</Text>
+                  <Text style={styles.emptyText}>No ideas yet</Text>
+                  <Text style={styles.emptySubtext}>
+                    Tap + to capture your first idea
+                  </Text>
+                </View>
+              )}
+
+              <FAB onPress={handleFABPress} />
+            </>
+          ) : (
+            <CompletedList
+              ideas={completedIdeas}
+              categories={categories}
+              onPress={handleCompletedIdeaTap}
+              onDelete={handleDeleteCompletedIdea}
+            />
           )}
-
-          {/* FAB */}
-          <FAB onPress={handleFABPress} />
         </View>
       </View>
 
@@ -220,11 +323,13 @@ export default function MainScreen() {
         ref={bottomSheetRef}
         idea={selectedIdea}
         isCreating={isCreating}
+        isViewingCompleted={isViewingCompleted}
         categories={categories}
         defaultCategoryId={defaultCategoryId}
-        images={ideaImages}
+        images={displayImages}
         onSave={handleSaveIdea}
         onDelete={handleDeleteIdea}
+        onComplete={handleCompleteIdea}
         onAddImage={handleAddImage}
         onRemoveImage={handleRemoveImage}
         onClose={handleSheetClose}

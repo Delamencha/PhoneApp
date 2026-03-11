@@ -1,8 +1,12 @@
 import * as SQLite from 'expo-sqlite';
-import { Idea, IdeaFormData } from '../models/types';
+import { Idea, IdeaFormData, CompletionStatus } from '../models/types';
+
+// ─── Active ideas (not completed) ───
 
 export async function getAllIdeas(db: SQLite.SQLiteDatabase): Promise<Idea[]> {
-  return db.getAllAsync<Idea>('SELECT * FROM ideas ORDER BY createdAt DESC');
+  return db.getAllAsync<Idea>(
+    'SELECT * FROM ideas WHERE completedAt IS NULL ORDER BY createdAt DESC',
+  );
 }
 
 export async function getIdeasByCategory(
@@ -10,8 +14,38 @@ export async function getIdeasByCategory(
   categoryId: number
 ): Promise<Idea[]> {
   return db.getAllAsync<Idea>(
-    'SELECT * FROM ideas WHERE categoryId = ? ORDER BY createdAt DESC',
+    'SELECT * FROM ideas WHERE categoryId = ? AND completedAt IS NULL ORDER BY createdAt DESC',
     [categoryId]
+  );
+}
+
+// ─── Completed ideas ───
+
+export async function getAllCompletedIdeas(db: SQLite.SQLiteDatabase): Promise<Idea[]> {
+  return db.getAllAsync<Idea>(
+    'SELECT * FROM ideas WHERE completedAt IS NOT NULL ORDER BY createdAt DESC',
+  );
+}
+
+export async function getCompletedIdeasByCategory(
+  db: SQLite.SQLiteDatabase,
+  categoryId: number,
+): Promise<Idea[]> {
+  return db.getAllAsync<Idea>(
+    'SELECT * FROM ideas WHERE categoryId = ? AND completedAt IS NOT NULL ORDER BY createdAt DESC',
+    [categoryId],
+  );
+}
+
+export async function completeIdea(
+  db: SQLite.SQLiteDatabase,
+  id: number,
+  status: CompletionStatus,
+  note?: string,
+): Promise<void> {
+  await db.runAsync(
+    'UPDATE ideas SET completionStatus = ?, completionNote = ?, completedAt = ?, updatedAt = ? WHERE id = ?',
+    [status, note ?? null, new Date().toISOString(), new Date().toISOString(), id],
   );
 }
 

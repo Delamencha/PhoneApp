@@ -12,15 +12,17 @@ import {
 import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Ionicons } from '@expo/vector-icons';
-import { Category, Idea, IdeaImage } from '../models/types';
+import { Category, CompletionStatus, Idea, IdeaImage } from '../models/types';
 import { getElapsedLabel } from '../layout/bubblePacker';
 import WillSlider from './WillSlider';
 import SourceImageGrid from './SourceImageGrid';
-import { Colors, Spacing, BorderRadius, Shadow } from '../theme';
+import CompletionModal from './CompletionModal';
+import { Colors, CompletionColors, CompletionLabels, Spacing, BorderRadius, Shadow } from '../theme';
 
 interface IdeaDetailSheetProps {
   idea: Idea | null;
   isCreating: boolean;
+  isViewingCompleted?: boolean;
   categories: Category[];
   defaultCategoryId: number;
   images: IdeaImage[];
@@ -32,6 +34,7 @@ interface IdeaDetailSheetProps {
     createdAt: string;
   }) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  onComplete: (status: CompletionStatus, note: string) => Promise<void>;
   onAddImage: (uri: string) => Promise<void>;
   onRemoveImage: (imageId: number) => Promise<void>;
   onClose: () => void;
@@ -39,7 +42,7 @@ interface IdeaDetailSheetProps {
 
 const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
   (
-    { idea, isCreating, categories, defaultCategoryId, images, onSave, onDelete, onAddImage, onRemoveImage, onClose },
+    { idea, isCreating, isViewingCompleted, categories, defaultCategoryId, images, onSave, onDelete, onComplete, onAddImage, onRemoveImage, onClose },
     ref
   ) => {
     // ─── Refs ───
@@ -61,6 +64,9 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
     const [createdAt, setCreatedAt] = useState(new Date());
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
+    const [showCompletionModal, setShowCompletionModal] = useState(false);
+
+    const readOnly = !!isViewingCompleted;
 
     const snapPoints = useMemo(() => ['65%', '90%'], []);
 
@@ -160,6 +166,12 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
         d.getMinutes()
       ).padStart(2, '0')}`;
 
+    const headerTitle = readOnly
+      ? 'Completed Idea'
+      : isCreating
+        ? 'New Idea'
+        : 'Edit Idea';
+
     return (
       <BottomSheet
         ref={setRef}
@@ -185,9 +197,7 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
             >
               <Ionicons name="arrow-back" size={22} color={Colors.textSecondary} />
             </TouchableOpacity>
-            <Text style={styles.headerTitle}>
-              {isCreating ? 'New Idea' : 'Edit Idea'}
-            </Text>
+            <Text style={styles.headerTitle}>{headerTitle}</Text>
             {elapsedText ? (
               <View style={styles.elapsedBadge}>
                 <Ionicons name="time-outline" size={14} color={Colors.textTertiary} />
@@ -198,86 +208,135 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
             )}
           </View>
 
+          {/* Completion status badge (read-only view) */}
+          {readOnly && idea?.completionStatus && (
+            <View style={styles.completionBanner}>
+              <View
+                style={[
+                  styles.completionDot,
+                  { backgroundColor: CompletionColors[idea.completionStatus] },
+                ]}
+              />
+              <View style={styles.completionBannerContent}>
+                <Text
+                  style={[
+                    styles.completionStatusText,
+                    { color: CompletionColors[idea.completionStatus] },
+                  ]}
+                >
+                  {CompletionLabels[idea.completionStatus]}
+                </Text>
+                {idea.completedAt && (
+                  <Text style={styles.completionDateText}>
+                    {formatDate(new Date(idea.completedAt))}
+                  </Text>
+                )}
+              </View>
+            </View>
+          )}
+
+          {readOnly && idea?.completionNote ? (
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Completion Note</Text>
+              <View style={styles.readOnlyBox}>
+                <Text style={styles.readOnlyText}>{idea.completionNote}</Text>
+              </View>
+            </View>
+          ) : null}
+
           {/* Title */}
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Title</Text>
-            <TextInput
-              style={styles.textInput}
-              value={title}
-              onChangeText={setTitle}
-              placeholder="What's the idea?"
-              placeholderTextColor={Colors.placeholder}
-            />
+            {readOnly ? (
+              <View style={styles.readOnlyBox}>
+                <Text style={styles.readOnlyText}>{title || 'Untitled'}</Text>
+              </View>
+            ) : (
+              <TextInput
+                style={styles.textInput}
+                value={title}
+                onChangeText={setTitle}
+                placeholder="What's the idea?"
+                placeholderTextColor={Colors.placeholder}
+              />
+            )}
           </View>
 
           {/* Source */}
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Source / Origin</Text>
-            <TextInput
-              style={[styles.textInput, styles.multilineInput]}
-              value={source}
-              onChangeText={setSource}
-              placeholder="Where did this idea come from? (article, video, conversation...)"
-              placeholderTextColor={Colors.placeholder}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
+            {readOnly ? (
+              <View style={styles.readOnlyBox}>
+                <Text style={styles.readOnlyText}>{source || '-'}</Text>
+              </View>
+            ) : (
+              <TextInput
+                style={[styles.textInput, styles.multilineInput]}
+                value={source}
+                onChangeText={setSource}
+                placeholder="Where did this idea come from? (article, video, conversation...)"
+                placeholderTextColor={Colors.placeholder}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            )}
           </View>
 
           {/* Source Images */}
-          {!isCreating && idea && (
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Source Image</Text>
-              <SourceImageGrid
-                images={images}
-                onAdd={onAddImage}
-                onRemove={onRemoveImage}
-              />
-            </View>
-          )}
+          <View style={styles.field}>
+            <Text style={styles.fieldLabel}>Source Image</Text>
+            <SourceImageGrid
+              images={images}
+              onAdd={onAddImage}
+              onRemove={onRemoveImage}
+              disabled={readOnly}
+            />
+          </View>
 
           {/* Created time */}
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>Created Time</Text>
-            <TouchableOpacity
-              style={styles.dateRow}
-              onPress={() => setShowDatePicker(true)}
-            >
-              <Ionicons
-                name="calendar-outline"
-                size={18}
-                color={Colors.primary}
-              />
-              <Text style={styles.dateText}>{formatDate(createdAt)}</Text>
-              <Ionicons
-                name="chevron-forward"
-                size={16}
-                color={Colors.textTertiary}
-              />
-            </TouchableOpacity>
-            {showDatePicker && (
-              <DateTimePicker
-                value={createdAt}
-                mode={Platform.OS === 'ios' ? 'datetime' : 'date'}
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={handleDateChange}
-              />
-            )}
-            {showTimePicker && (
-              <DateTimePicker
-                value={createdAt}
-                mode="time"
-                display="default"
-                onChange={handleTimeChange}
-              />
+            {readOnly ? (
+              <View style={styles.readOnlyBox}>
+                <Text style={styles.readOnlyText}>{formatDate(createdAt)}</Text>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.dateRow}
+                  onPress={() => setShowDatePicker(true)}
+                >
+                  <Ionicons name="calendar-outline" size={18} color={Colors.primary} />
+                  <Text style={styles.dateText}>{formatDate(createdAt)}</Text>
+                  <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+                </TouchableOpacity>
+                {showDatePicker && (
+                  <DateTimePicker
+                    value={createdAt}
+                    mode={Platform.OS === 'ios' ? 'datetime' : 'date'}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={handleDateChange}
+                  />
+                )}
+                {showTimePicker && (
+                  <DateTimePicker
+                    value={createdAt}
+                    mode="time"
+                    display="default"
+                    onChange={handleTimeChange}
+                  />
+                )}
+              </>
             )}
           </View>
 
           {/* Willingness slider */}
-          <View style={styles.field}>
-            <WillSlider value={willingness} onValueChange={setWillingness} />
-          </View>
+          {!readOnly && (
+            <View style={styles.field}>
+              <WillSlider value={willingness} onValueChange={setWillingness} />
+            </View>
+          )}
 
           {/* Category selector */}
           <View style={styles.field}>
@@ -290,7 +349,8 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
                     styles.chip,
                     categoryId === cat.id && styles.chipActive,
                   ]}
-                  onPress={() => setCategoryId(cat.id)}
+                  onPress={() => { if (!readOnly) setCategoryId(cat.id); }}
+                  activeOpacity={readOnly ? 1 : 0.7}
                 >
                   <Text
                     style={[
@@ -306,43 +366,63 @@ const IdeaDetailSheet = forwardRef<BottomSheet, IdeaDetailSheetProps>(
           </View>
 
           {/* Sub-ideas placeholder */}
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Sub-ideas</Text>
-            <View style={styles.placeholder}>
-              <Ionicons
-                name="git-branch-outline"
-                size={20}
-                color={Colors.textTertiary}
-              />
-              <Text style={styles.placeholderText}>Coming soon</Text>
+          {!readOnly && (
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Sub-ideas</Text>
+              <View style={styles.placeholder}>
+                <Ionicons name="git-branch-outline" size={20} color={Colors.textTertiary} />
+                <Text style={styles.placeholderText}>Coming soon</Text>
+              </View>
             </View>
-          </View>
+          )}
 
           {/* Action buttons */}
-          <View style={styles.actions}>
-            <TouchableOpacity
-              style={styles.saveBtn}
-              onPress={handleSave}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="checkmark" size={20} color={Colors.textOnPrimary} />
-              <Text style={styles.saveBtnText}>
-                {isCreating ? 'Create' : 'Save'}
-              </Text>
-            </TouchableOpacity>
-
-            {!isCreating && idea && (
+          {!readOnly && (
+            <View style={styles.actions}>
               <TouchableOpacity
-                style={styles.deleteBtn}
-                onPress={handleDelete}
+                style={styles.saveBtn}
+                onPress={handleSave}
                 activeOpacity={0.8}
               >
-                <Ionicons name="trash-outline" size={18} color={Colors.danger} />
-                <Text style={styles.deleteBtnText}>Delete</Text>
+                <Ionicons name="checkmark" size={20} color={Colors.textOnPrimary} />
+                <Text style={styles.saveBtnText}>
+                  {isCreating ? 'Create' : 'Save'}
+                </Text>
               </TouchableOpacity>
-            )}
-          </View>
+
+              {!isCreating && idea && (
+                <TouchableOpacity
+                  style={styles.completeBtn}
+                  onPress={() => setShowCompletionModal(true)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="flag-outline" size={18} color={Colors.success} />
+                  <Text style={styles.completeBtnText}>Complete</Text>
+                </TouchableOpacity>
+              )}
+
+              {!isCreating && idea && (
+                <TouchableOpacity
+                  style={styles.deleteBtn}
+                  onPress={handleDelete}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="trash-outline" size={18} color={Colors.danger} />
+                  <Text style={styles.deleteBtnText}>Delete</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </BottomSheetScrollView>
+
+        <CompletionModal
+          visible={showCompletionModal}
+          onConfirm={(status, note) => {
+            setShowCompletionModal(false);
+            onComplete(status, note);
+          }}
+          onCancel={() => setShowCompletionModal(false)}
+        />
       </BottomSheet>
     );
   }
@@ -474,6 +554,42 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     fontStyle: 'italic',
   },
+  completionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceVariant,
+    padding: Spacing.sm + 2,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
+  },
+  completionDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  completionBannerContent: {
+    flex: 1,
+  },
+  completionStatusText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  completionDateText: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    marginTop: 1,
+  },
+  readOnlyBox: {
+    backgroundColor: Colors.surfaceVariant,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.sm,
+  },
+  readOnlyText: {
+    fontSize: 15,
+    color: Colors.textPrimary,
+  },
   actions: {
     marginTop: Spacing.md,
     gap: Spacing.sm,
@@ -492,6 +608,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: Colors.textOnPrimary,
+  },
+  completeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surface,
+    paddingVertical: Spacing.sm + 2,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.success,
+    gap: 6,
+  },
+  completeBtnText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.success,
   },
   deleteBtn: {
     flexDirection: 'row',

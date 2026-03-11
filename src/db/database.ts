@@ -43,7 +43,25 @@ async function initializeSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       createdAt TEXT NOT NULL,
       FOREIGN KEY (ideaId) REFERENCES ideas(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
+
+  // ─── Migration: add completion columns to ideas ───
+  const cols = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(ideas)`
+  );
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has('completionStatus')) {
+    await db.execAsync(`
+      ALTER TABLE ideas ADD COLUMN completionStatus INTEGER DEFAULT NULL;
+      ALTER TABLE ideas ADD COLUMN completionNote TEXT DEFAULT NULL;
+      ALTER TABLE ideas ADD COLUMN completedAt TEXT DEFAULT NULL;
+    `);
+  }
 
   // Seed default categories if none exist
   const row = await db.getFirstAsync<{ count: number }>(

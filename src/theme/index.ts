@@ -120,6 +120,23 @@ export const Shadow = {
   },
 };
 
+// Completion status visual config (keyed by CompletionStatus enum value)
+export const CompletionColors: Record<number, string> = {
+  1: '#EF4444', // Cancelled – red
+  2: '#F97316', // Not worth the cost – orange
+  3: '#EAB308', // Replaced / encompassed – yellow
+  4: '#3B82F6', // Done, average feedback – blue
+  5: '#10B981', // Done, great feedback – green
+};
+
+export const CompletionLabels: Record<number, string> = {
+  1: 'Cancelled',
+  2: 'Not worth it',
+  3: 'Replaced',
+  4: 'Done, OK',
+  5: 'Done, Great',
+};
+
 // Bubble sizing constants
 export const BubbleConfig = {
   minRadius: 28,       // minimum bubble radius in dp

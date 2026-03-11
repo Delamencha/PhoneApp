@@ -1,3 +1,13 @@
+// ─── Completion Status ───
+
+export enum CompletionStatus {
+  Cancelled = 1,
+  NotWorthCost = 2,
+  Replaced = 3,
+  DoneAverage = 4,
+  DoneGreat = 5,
+}
+
 // ─── Data Models ───
 
 export interface Idea {
@@ -10,6 +20,9 @@ export interface Idea {
   posY: number;              // canvas position Y (normalized 0~1)
   createdAt: string;         // ISO datetime string
   updatedAt: string;         // ISO datetime string
+  completionStatus: CompletionStatus | null;
+  completionNote: string | null;
+  completedAt: string | null;
 }
 
 export interface Category {
@@ -28,7 +41,7 @@ export interface IdeaImage {
 
 // ─── Form / UI types ───
 
-export type IdeaFormData = Omit<Idea, 'id' | 'updatedAt'>;
+export type IdeaFormData = Omit<Idea, 'id' | 'updatedAt' | 'completionStatus' | 'completionNote' | 'completedAt'>;
 
 export interface BubbleData {
   idea: Idea;

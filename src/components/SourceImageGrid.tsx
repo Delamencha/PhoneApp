@@ -82,7 +82,7 @@ export default function SourceImageGrid({
             key={img.id}
             style={styles.imageWrapper}
             onPress={() => setPreviewUri(img.uri)}
-            onLongPress={() => handleLongPress(img)}
+            onLongPress={disabled ? undefined : () => handleLongPress(img)}
             activeOpacity={0.8}
           >
             <Image source={{ uri: img.uri }} style={styles.image} />
